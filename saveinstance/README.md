@@ -22,7 +22,7 @@ This is useful for games that temporarily replicate assets to the client and the
 ## Loadstring
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
@@ -34,7 +34,7 @@ The GUI opens automatically. Press **Start**, wait for assets to appear, then pr
 ## Manual API usage
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
@@ -64,7 +64,7 @@ Momentum.Stop()
 
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/saveinstance.luau", true), "saveinstance")()
-local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau", true), "Momentum SaveInstancer")()
+local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau", true), "Momentum SaveInstancer")()
 
 Momentum.Start({
     SaveInstance = synsaveinstance,
