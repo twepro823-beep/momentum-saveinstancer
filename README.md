@@ -1,6 +1,6 @@
 # Momentum SaveInstancer
 
-Momentum SaveInstancer is a secondary project built on top of UniversalSynSaveInstance. It watches client-visible instances in the background, snapshots new assets, and writes a final lightweight `.rbxlx` with recovered missing assets placed under `ServerStorage/MomentumRecoveredAssets`.
+Momentum SaveInstancer is a secondary project built on top of UniversalSynSaveInstance. It watches client-visible instances in the background, snapshots new replicated assets quickly, and writes a final lightweight `.rbxlx` with recovered assets placed under `ServerStorage/MomentumRecoveredAssets`.
 
 Main files live in [`saveinstance/`](saveinstance/):
 
@@ -18,7 +18,7 @@ assert(loader, err)
 local Momentum = loader()
 ```
 
-The GUI opens automatically. Press **Start**, let the game reveal assets, then press **Stop**. Keep **Light RBXLX** enabled for a smaller file that opens faster in Studio. The initial baseline save is optional and disabled by default to reduce Roblox client crashes on large games.
+The GUI opens automatically. Press **Start**, let the game reveal assets, then press **Stop**. Keep **Light RBXLX** and **Save Seen Live** enabled for replicated assets that stay in Workspace, like remote-spawned flowers. The initial baseline save is optional and disabled by default.
 
 ## Important
 

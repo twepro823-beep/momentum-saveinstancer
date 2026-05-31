@@ -2,7 +2,7 @@
 
 Momentum SaveInstancer is a wrapper around UniversalSynSaveInstance that works like a background asset logger.
 
-When you press **Start**, it begins watching client-visible instances. While it is running, new models, folders, parts, tools, meshes, unions, and other replicated instances are snapshotted. When you press **Stop**, it writes a final lightweight `.rbxlx` and injects recovered missing snapshots into:
+When you press **Start**, it begins watching client-visible instances. While it is running, new models, folders, parts, tools, meshes, unions, UI objects, effects, sounds, and other replicated instances are snapshotted. When you press **Stop**, it writes a final lightweight `.rbxlx` and injects recovered snapshots into:
 
 ```text
 ServerStorage
@@ -29,7 +29,7 @@ assert(loader, err)
 local Momentum = loader()
 ```
 
-The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file. Keep **Light RBXLX** enabled for a smaller file that opens faster in Studio. The initial baseline save is optional and disabled by default for stability.
+The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file. Keep **Light RBXLX** enabled for a smaller file that opens faster in Studio. Keep **Save Seen Live** enabled when assets are replicated from remotes and stay visible, like generated flower models.
 
 ## Manual API usage
 
@@ -44,11 +44,14 @@ Momentum.Start({
     InitialFilePath = "momentum_initial_" .. game.PlaceId,
     FinalFilePath = "momentum_final_" .. game.PlaceId,
     IgnorePlayerCharacters = true,
+    IncludeLiveCaptured = true,
+    GroupRecoveredByParent = true,
     OutputMode = "minimal",
     CompactFinalSave = true,
     RunInitialSave = false,
+    FastCaptureDelay = 0,
     CaptureDelay = 0.75,
-    MaxCapturedRoots = 1000,
+    MaxCapturedRoots = 2500,
     MaxSnapshotDescendants = 4000,
     SaveOptions = {
         ReadMe = true,
@@ -113,6 +116,14 @@ These children are serialized under `someParentInstance` without changing the li
 - `minimal` (default): saves a small `.rbxlx` containing only `ServerStorage/MomentumRecoveredAssets`. This opens much faster in Studio.
 - `full`: saves the normal game plus recovered assets. Use only when you really need the whole map in the same file.
 - `model`: saves only the recovered folder as `.rbxmx`.
+
+## Remote-replicated asset support
+
+- `FastCaptureDelay = 0` snapshots immediately so short-lived RemoteEvent assets are not missed.
+- `CaptureDelay = 0.75` refreshes the snapshot after the model settles, catching children that arrive a moment later.
+- `IncludeLiveCaptured = true` saves assets that were seen even if they are still in Workspace at Stop.
+- `MaxCapturedRoots = 2500` allows large replicated bursts while still preventing runaway memory usage.
+- `GroupRecoveredByParent = true` groups large bursts, such as many `Flower...` models under one parent folder, so Studio's Explorer is easier to open and inspect.
 
 ## Credits and license
 
