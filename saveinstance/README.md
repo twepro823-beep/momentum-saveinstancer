@@ -9,12 +9,13 @@ ServerStorage
   MomentumRecoveredAssets
 ```
 
-This is useful for games that temporarily replicate assets to the client and then move or destroy them later.
+This is useful for games that temporarily replicate assets into `Workspace` and then move or destroy them later.
 
 ## Important limitations
 
 - This cannot read true server-only `ServerStorage` contents from the client. Roblox FilteringEnabled prevents that.
-- It only captures instances that become visible to the client while Momentum is running.
+- It only captures instances that become visible to the client under `Workspace` while Momentum is running.
+- `ReplicatedStorage`, `Players`, `StarterGui`, and other non-Workspace services are ignored by default to avoid false captures.
 - Server scripts and non-replicated server data still cannot be recovered by a client-side saveinstance.
 - Snapshot mode uses memory because it clones assets as soon as they appear.
 - Use this only in experiences you own, administer, or are authorized to inspect.
@@ -51,7 +52,20 @@ Momentum.Start({
     RunInitialSave = false,
     FastCaptureDelay = 0,
     CaptureDelay = 0.75,
-    MaxCapturedRoots = 2500,
+    CaptureServices = { "Workspace" },
+    CapturePathPrefixes = { "Workspace" },
+    IgnoreServices = {
+        "ReplicatedStorage",
+        "ReplicatedFirst",
+        "StarterGui",
+        "StarterPack",
+        "StarterPlayer",
+        "Players",
+        "Lighting",
+        "SoundService",
+        "CoreGui",
+    },
+    MaxCapturedRoots = false,
     MaxSnapshotDescendants = 4000,
     SaveOptions = {
         ReadMe = true,
@@ -122,8 +136,12 @@ These children are serialized under `someParentInstance` without changing the li
 - `FastCaptureDelay = 0` snapshots immediately so short-lived RemoteEvent assets are not missed.
 - `CaptureDelay = 0.75` refreshes the snapshot after the model settles, catching children that arrive a moment later.
 - `IncludeLiveCaptured = true` saves assets that were seen even if they are still in Workspace at Stop.
-- `MaxCapturedRoots = 2500` allows large replicated bursts while still preventing runaway memory usage.
+- `MaxCapturedRoots = false` removes the old hard root cap. Set a number if you want a safety cap.
+- `CaptureServices = { "Workspace" }` makes the watcher listen to Workspace only by default.
+- `CapturePathPrefixes = { "Workspace" }` can be narrowed, for example `{ "Workspace.ScenesServer" }`, when you only want one replicated asset tree.
+- `IgnoreServices` ignores `ReplicatedStorage` and other services by default, so cached/shared assets are not captured as recovered server-spawned assets.
 - `GroupRecoveredByParent = true` groups large bursts, such as many `Flower...` models under one parent folder, so Studio's Explorer is easier to open and inspect.
+- Capture eligibility is no longer limited to a small class list. Momentum tries to clone any non-ignored Roblox `Instance`, then uses class checks only for final-file compaction.
 
 ## Credits and license
 

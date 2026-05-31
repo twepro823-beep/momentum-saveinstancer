@@ -7,10 +7,11 @@ local DEFAULT_SAVEINSTANCE_URL = "https://raw.githubusercontent.com/twepro823-be
 
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
 local GLOBAL_ENV = getgenv and getgenv() or _G
 
 local Momentum = {}
-Momentum.Version = "0.5.0"
+Momentum.Version = "0.6.0"
 
 local state = {
 	running = false,
@@ -34,11 +35,14 @@ local state = {
 local WRAPPER_KEYS = {
 	AutoGui = true,
 	CaptureDelay = true,
+	CapturePathPrefixes = true,
+	CaptureServices = true,
 	CompactFinalSave = true,
 	FastCaptureDelay = true,
 	FinalFilePath = true,
 	GroupRecoveredByParent = true,
 	IgnorePlayerCharacters = true,
+	IgnoreServices = true,
 	IncludeLiveCaptured = true,
 	InitialFilePath = true,
 	MaxCapturedRoots = true,
@@ -194,27 +198,89 @@ local function safeIsA(instance, className)
 	return ok and result
 end
 
-local function isAssetRootCandidate(instance)
+local function getRootService(instance)
 	if typeof(instance) ~= "Instance" then
+		return nil
+	end
+
+	local current = instance
+	local parent = current.Parent
+	while parent and parent ~= game do
+		current = parent
+		parent = current.Parent
+	end
+
+	if parent == game then
+		return current
+	end
+	return nil
+end
+
+local function optionListMatches(list, instance, name, className)
+	if type(list) ~= "table" then
 		return false
 	end
-	return safeIsA(instance, "Model")
-		or safeIsA(instance, "Folder")
-		or safeIsA(instance, "Tool")
-		or safeIsA(instance, "Accessory")
-		or safeIsA(instance, "BasePart")
-		or safeIsA(instance, "LayerCollector")
-		or safeIsA(instance, "GuiObject")
-		or safeIsA(instance, "Sound")
-		or safeIsA(instance, "Decal")
-		or safeIsA(instance, "Texture")
-		or safeIsA(instance, "ParticleEmitter")
-		or safeIsA(instance, "Trail")
-		or safeIsA(instance, "Beam")
-		or safeIsA(instance, "Light")
-		or safeIsA(instance, "Constraint")
-		or safeIsA(instance, "Animation")
-		or safeIsA(instance, "DataModelMesh")
+
+	for _, value in list do
+		if typeof(value) == "Instance" then
+			if value == instance then
+				return true
+			end
+		elseif type(value) == "string" and (value == name or value == className) then
+			return true
+		end
+	end
+	return false
+end
+
+local function pathMatchesPrefix(path, prefix)
+	if type(path) ~= "string" or type(prefix) ~= "string" then
+		return false
+	end
+
+	if string.sub(path, 1, 5) == "game." then
+		path = string.sub(path, 6)
+	end
+	if string.sub(prefix, 1, 5) == "game." then
+		prefix = string.sub(prefix, 6)
+	end
+
+	if path == prefix then
+		return true
+	end
+
+	return string.sub(path, 1, #prefix + 1) == prefix .. "."
+end
+
+local function isInCaptureScope(instance)
+	local root = getRootService(instance)
+	if not root then
+		return false
+	end
+
+	local rootName = root.Name
+	local rootClassName = root.ClassName
+	if optionListMatches(state.options.IgnoreServices, root, rootName, rootClassName) then
+		return false
+	end
+
+	local captureServices = state.options.CaptureServices
+	if type(captureServices) == "table" and not optionListMatches(captureServices, root, rootName, rootClassName) then
+		return false
+	end
+
+	local prefixes = state.options.CapturePathPrefixes
+	if type(prefixes) == "table" then
+		local fullName = safeFullName(instance)
+		for _, prefix in prefixes do
+			if pathMatchesPrefix(fullName, prefix) then
+				return true
+			end
+		end
+		return false
+	end
+
+	return true
 end
 
 local function countDescendantsLimited(instance, limit)
@@ -239,17 +305,6 @@ local function countDescendantsLimited(instance, limit)
 	end
 	visit(instance)
 	return total
-end
-
-local function hasPendingAncestor(instance)
-	local parent = instance.Parent
-	while parent and parent ~= game do
-		if state.pending[parent] then
-			return true
-		end
-		parent = parent.Parent
-	end
-	return false
 end
 
 local function clearPendingDescendants(instance)
@@ -299,6 +354,9 @@ local function isIgnored(instance)
 		end
 	end
 	if state.options.IgnorePlayerCharacters ~= false and isPlayerCharacterDescendant(instance) then
+		return true
+	end
+	if not isInCaptureScope(instance) then
 		return true
 	end
 	local ignoreList = state.options.IgnoreList
@@ -401,8 +459,8 @@ local function updateSnapshot(instance, reason)
 		return
 	end
 
-	local maxRoots = getOptionNumber("MaxCapturedRoots", 2500, 1)
-	if not record and maxRoots <= #state.order then
+	local maxRoots = type(state.options.MaxCapturedRoots) == "number" and state.options.MaxCapturedRoots or nil
+	if maxRoots and maxRoots > 0 and not record and maxRoots <= #state.order then
 		state.skippedCount += 1
 		log("Skipped capture: root limit reached (" .. tostring(maxRoots) .. ")")
 		return
@@ -427,10 +485,12 @@ local function updateSnapshot(instance, reason)
 			original = instance,
 			className = instance.ClassName,
 			firstSeen = now,
-			fullName = safeFullName(instance),
-			parentFullName = getParentFullName(instance),
+			originalFullName = safeFullName(instance),
+			originalParentFullName = getParentFullName(instance),
 			ancestors = buildAncestorSet(instance),
 		}
+		record.fullName = record.originalFullName
+		record.parentFullName = record.originalParentFullName
 		state.captured[instance] = record
 		table.insert(state.order, record)
 		state.capturedCount = #state.order
@@ -440,13 +500,15 @@ local function updateSnapshot(instance, reason)
 	record.snapshot = clone
 	record.lastSeen = now
 	record.reason = reason or "updated"
-	record.fullName = record.fullName or safeFullName(instance)
-	record.parentFullName = getParentFullName(instance)
+	record.lastFullName = safeFullName(instance)
+	record.lastParentFullName = getParentFullName(instance)
 	record.ancestors = buildAncestorSet(instance)
 	record.descendantCount = descendantCount
 
 	safeSetAttribute(clone, "MomentumOriginalPath", record.fullName)
 	safeSetAttribute(clone, "MomentumOriginalParentPath", record.parentFullName)
+	safeSetAttribute(clone, "MomentumLastPath", record.lastFullName)
+	safeSetAttribute(clone, "MomentumLastParentPath", record.lastParentFullName)
 	safeSetAttribute(clone, "MomentumOriginalClassName", record.className)
 	safeSetAttribute(clone, "MomentumCapturedAt", record.firstSeen)
 	safeSetAttribute(clone, "MomentumLastSeenAt", record.lastSeen)
@@ -481,9 +543,6 @@ local function captureAdded(instance)
 	if isIgnored(instance) then
 		return
 	end
-	if hasPendingAncestor(instance) and not isAssetRootCandidate(instance) then
-		return
-	end
 
 	state.pending[instance] = true
 	clearPendingDescendants(instance)
@@ -513,6 +572,47 @@ local function captureAdded(instance)
 			Momentum.UpdateGui()
 		end
 	end)
+end
+
+local function resolveCaptureService(value)
+	if typeof(value) == "Instance" then
+		local ok, result = pcall(function()
+			return value.Parent == game or value:IsDescendantOf(game)
+		end)
+		if ok and result then
+			return value
+		end
+	elseif type(value) == "string" then
+		local ok, service = pcall(function()
+			return game:GetService(value)
+		end)
+		if ok and service then
+			return service
+		end
+		return game:FindFirstChild(value)
+	end
+	return nil
+end
+
+local function connectCaptureSources()
+	local captureServices = state.options.CaptureServices
+	if type(captureServices) ~= "table" then
+		addConnection(game.DescendantAdded:Connect(captureAdded))
+		return
+	end
+
+	local connected = {}
+	for _, value in captureServices do
+		local service = resolveCaptureService(value)
+		if service and not connected[service] then
+			connected[service] = true
+			addConnection(service.DescendantAdded:Connect(captureAdded))
+		end
+	end
+
+	if not next(connected) then
+		addConnection(Workspace.DescendantAdded:Connect(captureAdded))
+	end
 end
 
 local function loadSaveInstance(options)
@@ -623,6 +723,7 @@ local function buildRecoveredFolder()
 	local includeLiveCaptured = state.options.IncludeLiveCaptured ~= false
 	local groupByParent = state.options.GroupRecoveredByParent ~= false
 	local groups = {}
+	local groupIndex = 0
 	local function getGroup(record)
 		if not groupByParent then
 			return folder
@@ -630,8 +731,9 @@ local function buildRecoveredFolder()
 		local key = record.parentFullName or "game"
 		local group = groups[key]
 		if not group then
+			groupIndex += 1
 			group = Instance.new("Folder")
-			group.Name = sanitizeName(key)
+			group.Name = string.format("%03d_%s", groupIndex, sanitizeName(key))
 			safeSetAttribute(group, "MomentumOriginalParentPath", key)
 			group.Parent = folder
 			groups[key] = group
@@ -722,12 +824,25 @@ function Momentum.Start(options)
 
 	options = mergeOptions({
 		CaptureDelay = 0.75,
+		CapturePathPrefixes = { "Workspace" },
+		CaptureServices = { "Workspace" },
 		CompactFinalSave = true,
 		FastCaptureDelay = 0,
 		GroupRecoveredByParent = true,
 		IgnorePlayerCharacters = true,
+		IgnoreServices = {
+			"ReplicatedStorage",
+			"ReplicatedFirst",
+			"StarterGui",
+			"StarterPack",
+			"StarterPlayer",
+			"Players",
+			"Lighting",
+			"SoundService",
+			"CoreGui",
+		},
 		IncludeLiveCaptured = true,
-		MaxCapturedRoots = 2500,
+		MaxCapturedRoots = false,
 		MaxSnapshotDescendants = 4000,
 		OutputMode = "minimal",
 		RefreshAncestorSnapshots = false,
@@ -761,7 +876,7 @@ function Momentum.Start(options)
 
 	state.saveinstance = result
 	clearConnections()
-	addConnection(game.DescendantAdded:Connect(captureAdded))
+	connectCaptureSources()
 	addConnection(Players.PlayerAdded:Connect(function(player)
 		addConnection(player.CharacterAdded:Connect(function(character)
 			task.defer(function()

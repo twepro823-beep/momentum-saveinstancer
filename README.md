@@ -1,6 +1,6 @@
 # Momentum SaveInstancer
 
-Momentum SaveInstancer is a secondary project built on top of UniversalSynSaveInstance. It watches client-visible instances in the background, snapshots new replicated assets quickly, and writes a final lightweight `.rbxlx` with recovered assets placed under `ServerStorage/MomentumRecoveredAssets`.
+Momentum SaveInstancer is a secondary project built on top of UniversalSynSaveInstance. It watches client-visible instances that appear under `Workspace`, snapshots new replicated assets quickly, and writes a final lightweight `.rbxlx` with recovered assets placed under `ServerStorage/MomentumRecoveredAssets`.
 
 Main files live in [`saveinstance/`](saveinstance/):
 
@@ -18,11 +18,19 @@ assert(loader, err)
 local Momentum = loader()
 ```
 
-The GUI opens automatically. Press **Start**, let the game reveal assets, then press **Stop**. Keep **Light RBXLX** and **Save Seen Live** enabled for replicated assets that stay in Workspace, like remote-spawned flowers. The initial baseline save is optional and disabled by default.
+The GUI opens automatically. Press **Start**, let the game reveal assets under `Workspace`, then press **Stop**. Keep **Light RBXLX** and **Save Seen Live** enabled for replicated assets that stay in Workspace, like remote-spawned flowers. The initial baseline save is optional and disabled by default.
+
+By default Momentum ignores `ReplicatedStorage` and other non-Workspace services, has no hard captured-root cap, and groups recovered assets by their original parent path. You can narrow capture to a tree like `Workspace.ScenesServer` with:
+
+```lua
+Momentum.Start({
+    CapturePathPrefixes = { "Workspace.ScenesServer" },
+})
+```
 
 ## Important
 
-This tool cannot read true server-only `ServerStorage` from the client. It only captures instances that become visible to the client while Momentum is running. Use it only in experiences you own, administer, or are authorized to inspect.
+This tool cannot read true server-only `ServerStorage` from the client. It only captures instances that become visible to the client under `Workspace` while Momentum is running. Use it only in experiences you own, administer, or are authorized to inspect.
 
 ## Credits
 
