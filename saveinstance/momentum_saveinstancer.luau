@@ -3,22 +3,10 @@
 -- Watches client-visible instances, snapshots new assets, and injects recovered
 -- missing assets into ServerStorage during the final save.
 
-local DEFAULT_SAVEINSTANCE_URL = "https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau"
+local DEFAULT_SAVEINSTANCE_URL = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/saveinstance.luau"
 
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
-		local playerGui = localPlayer and localPlayer:FindFirstChildOfClass("PlayerGui")
-		if playerGui then
-			gui.Parent = playerGui
-		else
-			gui.Parent = CoreGui
-		end
-		parented = pcall(function()
-			gui.Parent = playerGui or CoreGui
-		end)
-	end
-	if not parented then
-		warn("[Momennt")
 local GLOBAL_ENV = getgenv and getgenv() or _G
 
 local Momentum = {}

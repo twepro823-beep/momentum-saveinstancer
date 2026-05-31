@@ -11,7 +11,11 @@ Main files live in [`saveinstance/`](saveinstance/):
 ## Quick Start
 
 ```lua
-local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau", true), "Momentum SaveInstancer")()
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau"
+local source = game:HttpGet(url, true)
+local loader, err = loadstring(source, "Momentum SaveInstancer")
+assert(loader, err)
+local Momentum = loader()
 ```
 
 The GUI opens automatically. Press **Start**, let the game reveal assets, then press **Stop** to write the final save.
