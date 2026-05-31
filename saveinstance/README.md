@@ -2,7 +2,7 @@
 
 Momentum SaveInstancer is a wrapper around UniversalSynSaveInstance that works like a background asset logger.
 
-When you press **Start**, it begins watching client-visible instances and runs a normal baseline save. While it is running, every new model, folder, part, tool, mesh, union, or other replicated instance is snapshotted. When you press **Stop**, it writes a final `.rbxlx` and injects recovered missing snapshots into:
+When you press **Start**, it begins watching client-visible instances. While it is running, new models, folders, parts, tools, meshes, unions, and other replicated instances are snapshotted. When you press **Stop**, it writes a final lightweight `.rbxlx` and injects recovered missing snapshots into:
 
 ```text
 ServerStorage
@@ -22,19 +22,19 @@ This is useful for games that temporarily replicate assets to the client and the
 ## Loadstring
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
 local Momentum = loader()
 ```
 
-The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file. In v3 the initial baseline save is optional and disabled by default for stability.
+The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file. Keep **Light RBXLX** enabled for a smaller file that opens faster in Studio. The initial baseline save is optional and disabled by default for stability.
 
 ## Manual API usage
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
@@ -44,10 +44,12 @@ Momentum.Start({
     InitialFilePath = "momentum_initial_" .. game.PlaceId,
     FinalFilePath = "momentum_final_" .. game.PlaceId,
     IgnorePlayerCharacters = true,
+    OutputMode = "minimal",
+    CompactFinalSave = true,
     RunInitialSave = false,
     CaptureDelay = 0.75,
-    MaxCapturedRoots = 250,
-    MaxSnapshotDescendants = 1500,
+    MaxCapturedRoots = 1000,
+    MaxSnapshotDescendants = 4000,
     SaveOptions = {
         ReadMe = true,
         ShowStatus = true,
@@ -68,7 +70,7 @@ Momentum.Stop()
 
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/saveinstance.luau", true), "saveinstance")()
-local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau", true), "Momentum SaveInstancer")()
+local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer.luau", true), "Momentum SaveInstancer")()
 
 Momentum.Start({
     SaveInstance = synsaveinstance,
@@ -105,6 +107,12 @@ VirtualChildren = {
 ```
 
 These children are serialized under `someParentInstance` without changing the live game tree. Momentum uses this to place recovered snapshots under `ServerStorage/MomentumRecoveredAssets` in the final `.rbxlx`.
+
+## Output modes
+
+- `minimal` (default): saves a small `.rbxlx` containing only `ServerStorage/MomentumRecoveredAssets`. This opens much faster in Studio.
+- `full`: saves the normal game plus recovered assets. Use only when you really need the whole map in the same file.
+- `model`: saves only the recovered folder as `.rbxmx`.
 
 ## Credits and license
 

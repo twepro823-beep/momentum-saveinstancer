@@ -10,7 +10,7 @@ local CoreGui = game:GetService("CoreGui")
 local GLOBAL_ENV = getgenv and getgenv() or _G
 
 local Momentum = {}
-Momentum.Version = "0.3.0"
+Momentum.Version = "0.4.0"
 
 local state = {
 	running = false,
@@ -27,16 +27,19 @@ local state = {
 	recoveredCount = 0,
 	skippedCount = 0,
 	pending = {},
+	lastOutputMode = "minimal",
 }
 
 local WRAPPER_KEYS = {
 	AutoGui = true,
 	CaptureDelay = true,
+	CompactFinalSave = true,
 	FinalFilePath = true,
 	IgnorePlayerCharacters = true,
 	InitialFilePath = true,
 	MaxCapturedRoots = true,
 	MaxSnapshotDescendants = true,
+	OutputMode = true,
 	RecoveredFolderName = true,
 	RefreshAncestorSnapshots = true,
 	RunInitialSave = true,
@@ -89,6 +92,14 @@ end
 local function safeSetAttribute(instance, name, value)
 	pcall(function()
 		instance:SetAttribute(name, value)
+	end)
+end
+
+local function safeClearAttributes(instance)
+	pcall(function()
+		for name in pairs(instance:GetAttributes()) do
+			instance:SetAttribute(name, nil)
+		end
 	end)
 end
 
@@ -152,6 +163,16 @@ local function getOptionNumber(name, fallback, minimum)
 	return value
 end
 
+local function normalizeOutputMode(value)
+	value = string.lower(tostring(value or "minimal"))
+	if value == "full" or value == "full_place" or value == "fullgame" then
+		return "full"
+	elseif value == "model" or value == "rbxmx" then
+		return "model"
+	end
+	return "minimal"
+end
+
 local function countDescendantsLimited(instance, limit)
 	local total = 0
 	local function visit(parent)
@@ -174,17 +195,6 @@ local function countDescendantsLimited(instance, limit)
 	end
 	visit(instance)
 	return total
-end
-
-local function hasCapturedLiveAncestor(instance)
-	local parent = instance.Parent
-	while parent and parent ~= game do
-		if state.captured[parent] and isLive(parent) then
-			return true
-		end
-		parent = parent.Parent
-	end
-	return false
 end
 
 local function hasPendingAncestor(instance)
@@ -299,12 +309,29 @@ local function cloneSnapshot(instance)
 	return clone
 end
 
-local function updateSnapshot(instance, reason)
-	if isIgnored(instance) then
+local function compactSnapshot(instance)
+	if state.options.CompactFinalSave == false then
 		return
 	end
 
-	if hasCapturedLiveAncestor(instance) then
+	for _, descendant in instance:GetDescendants() do
+		safeClearAttributes(descendant)
+		if descendant:IsA("LuaSourceContainer") then
+			pcall(function()
+				descendant.Disabled = true
+			end)
+		elseif descendant:IsA("BasePart") then
+			pcall(function()
+				descendant.Anchored = true
+				descendant.CanTouch = false
+				descendant.CanQuery = false
+			end)
+		end
+	end
+end
+
+local function updateSnapshot(instance, reason)
+	if isIgnored(instance) then
 		return
 	end
 
@@ -315,14 +342,14 @@ local function updateSnapshot(instance, reason)
 		return
 	end
 
-	local maxRoots = getOptionNumber("MaxCapturedRoots", 250, 1)
+	local maxRoots = getOptionNumber("MaxCapturedRoots", 1000, 1)
 	if not record and maxRoots <= #state.order then
 		state.skippedCount += 1
 		log("Skipped capture: root limit reached (" .. tostring(maxRoots) .. ")")
 		return
 	end
 
-	local maxDescendants = getOptionNumber("MaxSnapshotDescendants", 1500, 1)
+	local maxDescendants = getOptionNumber("MaxSnapshotDescendants", 4000, 1)
 	local descendantCount = countDescendantsLimited(instance, maxDescendants)
 	if maxDescendants < descendantCount then
 		state.skippedCount += 1
@@ -385,7 +412,7 @@ local function captureAdded(instance)
 	if not state.running then
 		return
 	end
-	if isIgnored(instance) or hasPendingAncestor(instance) or hasCapturedLiveAncestor(instance) then
+	if isIgnored(instance) or hasPendingAncestor(instance) then
 		return
 	end
 
@@ -442,14 +469,61 @@ local function buildSaveOptions(phase, extra)
 	return mergeOptions(base, extra)
 end
 
+local function buildFinalSaveOptions(recoveredFolder)
+	local outputMode = normalizeOutputMode(state.options.OutputMode)
+	state.lastOutputMode = outputMode
+
+	if outputMode == "model" then
+		recoveredFolder.Name = state.options.RecoveredFolderName or "MomentumRecoveredAssets"
+		return buildSaveOptions("final", {
+			Object = recoveredFolder,
+			IsModel = true,
+			mode = "full",
+			ReadMe = false,
+			noscripts = true,
+		})
+	end
+
+	local serverStorage = game:GetService("ServerStorage")
+	local extra = {
+		VirtualChildren = {
+			[serverStorage] = { recoveredFolder },
+		},
+		ReadMe = false,
+		noscripts = true,
+	}
+
+	if outputMode == "minimal" then
+		extra.mode = "invalid"
+		extra.ExtraInstances = { serverStorage }
+		extra.IsModel = false
+	end
+
+	return buildSaveOptions("final", extra)
+end
+
 local function hasMissingCapturedAncestor(record)
 	for ancestor in record.ancestors do
 		local ancestorRecord = state.captured[ancestor]
-		if ancestorRecord and ancestorRecord.snapshot and not isLive(ancestor) then
+		if
+			ancestorRecord
+			and ancestorRecord.snapshot
+			and not isLive(ancestor)
+			and (ancestorRecord.lastSeen or 0) >= (record.firstSeen or 0)
+		then
 			return true
 		end
 	end
 	return false
+end
+
+local function clearSnapshots()
+	for _, record in state.order do
+		if record.snapshot then
+			safeDestroy(record.snapshot)
+			record.snapshot = nil
+		end
+	end
 end
 
 local function buildRecoveredFolder()
@@ -464,6 +538,7 @@ local function buildRecoveredFolder()
 		if record.snapshot and not isLive(record.original) and not hasMissingCapturedAncestor(record) then
 			local clone = record.snapshot
 			record.snapshot = nil
+			compactSnapshot(clone)
 			pcall(function()
 				clone.Parent = folder
 			end)
@@ -506,12 +581,8 @@ local function runFinalSave()
 	local recoveredFolder, recovered = buildRecoveredFolder()
 	log("Recovered " .. recovered .. " missing captured root(s)")
 
-	local serverStorage = game:GetService("ServerStorage")
-	local options = buildSaveOptions("final", {
-		VirtualChildren = {
-			[serverStorage] = { recoveredFolder },
-		},
-	})
+	local options = buildFinalSaveOptions(recoveredFolder)
+	log("Writing " .. state.lastOutputMode .. " output")
 
 	local ok, err = xpcall(function()
 		state.saveinstance(options)
@@ -527,6 +598,7 @@ local function runFinalSave()
 	end
 
 	safeDestroy(recoveredFolder)
+	clearSnapshots()
 	Momentum.UpdateGui()
 end
 
@@ -538,9 +610,11 @@ function Momentum.Start(options)
 
 	options = mergeOptions({
 		CaptureDelay = 0.75,
+		CompactFinalSave = true,
 		IgnorePlayerCharacters = true,
-		MaxCapturedRoots = 250,
-		MaxSnapshotDescendants = 1500,
+		MaxCapturedRoots = 1000,
+		MaxSnapshotDescendants = 4000,
+		OutputMode = "minimal",
 		RefreshAncestorSnapshots = false,
 		RunInitialSave = false,
 		SnapshotCooldown = 1,
@@ -551,6 +625,7 @@ function Momentum.Start(options)
 	state.startedAt = os.clock()
 	state.recoveredCount = 0
 	state.skippedCount = 0
+	state.lastOutputMode = normalizeOutputMode(options.OutputMode)
 	table.clear(state.captured)
 	table.clear(state.order)
 	table.clear(state.logs)
@@ -783,6 +858,7 @@ function Momentum.CreateGui()
 	local readMeToggle = makeToggle(frame, "ReadMe", UDim2.new(0, 14, 0, 142), true)
 	local characterToggle = makeToggle(frame, "Ignore Characters", UDim2.new(0, 196, 0, 142), true)
 	local initialSaveToggle = makeToggle(frame, "Initial Save", UDim2.new(0, 14, 0, 176), false)
+	local lightOutputToggle = makeToggle(frame, "Light RBXLX", UDim2.new(0, 196, 0, 176), true)
 
 	local start = makeButton(frame, "Start", UDim2.new(0, 14, 0, 216), UDim2.new(0, 170, 0, 34), Color3.fromRGB(42, 126, 79))
 	local stop = makeButton(frame, "Stop", UDim2.new(0, 196, 0, 216), UDim2.new(0, 170, 0, 34), Color3.fromRGB(132, 66, 61))
@@ -809,6 +885,7 @@ function Momentum.CreateGui()
 		Momentum.Start({
 			FinalFilePath = finalName.Text ~= "" and finalName.Text or nil,
 			IgnorePlayerCharacters = characterToggle.Get(),
+			OutputMode = lightOutputToggle.Get() and "minimal" or "full",
 			RunInitialSave = initialSaveToggle.Get(),
 			SaveOptions = {
 				ReadMe = readMeToggle.Get(),
@@ -855,6 +932,8 @@ function Momentum.UpdateGui()
 		.. tostring(state.skippedCount)
 		.. " | Recovered: "
 		.. tostring(state.recoveredCount)
+		.. " | "
+		.. state.lastOutputMode
 	for i, label in controls.logLabels do
 		label.Text = state.logs[i] or ""
 	end
