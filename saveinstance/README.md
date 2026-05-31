@@ -22,19 +22,19 @@ This is useful for games that temporarily replicate assets to the client and the
 ## Loadstring
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
 local Momentum = loader()
 ```
 
-The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file.
+The GUI opens automatically. Press **Start**, wait for assets to appear, then press **Stop** to write the final file. In v3 the initial baseline save is optional and disabled by default for stability.
 
 ## Manual API usage
 
 ```lua
-local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau"
+local url = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau"
 local source = game:HttpGet(url, true)
 local loader, err = loadstring(source, "Momentum SaveInstancer")
 assert(loader, err)
@@ -44,6 +44,10 @@ Momentum.Start({
     InitialFilePath = "momentum_initial_" .. game.PlaceId,
     FinalFilePath = "momentum_final_" .. game.PlaceId,
     IgnorePlayerCharacters = true,
+    RunInitialSave = false,
+    CaptureDelay = 0.75,
+    MaxCapturedRoots = 250,
+    MaxSnapshotDescendants = 1500,
     SaveOptions = {
         ReadMe = true,
         ShowStatus = true,
@@ -64,7 +68,7 @@ Momentum.Stop()
 
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/saveinstance.luau", true), "saveinstance")()
-local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v2.luau", true), "Momentum SaveInstancer")()
+local Momentum = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/saveinstance/momentum_saveinstancer_v3.luau", true), "Momentum SaveInstancer")()
 
 Momentum.Start({
     SaveInstance = synsaveinstance,

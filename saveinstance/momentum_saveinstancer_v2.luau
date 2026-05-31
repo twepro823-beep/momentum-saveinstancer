@@ -10,7 +10,7 @@ local CoreGui = game:GetService("CoreGui")
 local GLOBAL_ENV = getgenv and getgenv() or _G
 
 local Momentum = {}
-Momentum.Version = "0.1.0"
+Momentum.Version = "0.3.0"
 
 local state = {
 	running = false,
@@ -25,18 +25,25 @@ local state = {
 	logs = {},
 	gui = nil,
 	recoveredCount = 0,
+	skippedCount = 0,
+	pending = {},
 }
 
 local WRAPPER_KEYS = {
 	AutoGui = true,
+	CaptureDelay = true,
 	FinalFilePath = true,
 	IgnorePlayerCharacters = true,
 	InitialFilePath = true,
+	MaxCapturedRoots = true,
+	MaxSnapshotDescendants = true,
 	RecoveredFolderName = true,
 	RefreshAncestorSnapshots = true,
+	RunInitialSave = true,
 	SaveInstance = true,
 	SaveInstanceUrl = true,
 	SaveOptions = true,
+	SnapshotCooldown = true,
 }
 
 local function shallowCopy(source)
@@ -65,7 +72,7 @@ end
 local function log(message)
 	local text = "[" .. os.date("%H:%M:%S") .. "] " .. tostring(message)
 	table.insert(state.logs, 1, text)
-	while #state.logs > 80 do
+	while #state.logs > 30 do
 		table.remove(state.logs)
 	end
 	print("[Momentum SaveInstancer] " .. tostring(message))
@@ -132,6 +139,74 @@ local function isLive(instance)
 		return instance:IsDescendantOf(game)
 	end)
 	return ok and result
+end
+
+local function getOptionNumber(name, fallback, minimum)
+	local value = state.options[name]
+	if type(value) ~= "number" then
+		return fallback
+	end
+	if minimum and value < minimum then
+		return fallback
+	end
+	return value
+end
+
+local function countDescendantsLimited(instance, limit)
+	local total = 0
+	local function visit(parent)
+		local ok, children = pcall(function()
+			return parent:GetChildren()
+		end)
+		if not ok then
+			return false
+		end
+		for _, child in children do
+			total += 1
+			if limit < total then
+				return false
+			end
+			if not visit(child) then
+				return false
+			end
+		end
+		return true
+	end
+	visit(instance)
+	return total
+end
+
+local function hasCapturedLiveAncestor(instance)
+	local parent = instance.Parent
+	while parent and parent ~= game do
+		if state.captured[parent] and isLive(parent) then
+			return true
+		end
+		parent = parent.Parent
+	end
+	return false
+end
+
+local function hasPendingAncestor(instance)
+	local parent = instance.Parent
+	while parent and parent ~= game do
+		if state.pending[parent] then
+			return true
+		end
+		parent = parent.Parent
+	end
+	return false
+end
+
+local function clearPendingDescendants(instance)
+	for pendingInstance in state.pending do
+		local ok, result = pcall(function()
+			return pendingInstance:IsDescendantOf(instance)
+		end)
+		if ok and result and pendingInstance ~= instance then
+			state.pending[pendingInstance] = nil
+		end
+	end
 end
 
 local function isPlayerCharacterDescendant(instance)
@@ -229,13 +304,38 @@ local function updateSnapshot(instance, reason)
 		return
 	end
 
-	local clone = cloneSnapshot(instance)
-	if not clone then
+	if hasCapturedLiveAncestor(instance) then
 		return
 	end
 
-	local now = os.clock()
 	local record = state.captured[instance]
+	local now = os.clock()
+	local cooldown = getOptionNumber("SnapshotCooldown", 1, 0)
+	if record and record.lastSeen and now - record.lastSeen < cooldown then
+		return
+	end
+
+	local maxRoots = getOptionNumber("MaxCapturedRoots", 250, 1)
+	if not record and maxRoots <= #state.order then
+		state.skippedCount += 1
+		log("Skipped capture: root limit reached (" .. tostring(maxRoots) .. ")")
+		return
+	end
+
+	local maxDescendants = getOptionNumber("MaxSnapshotDescendants", 1500, 1)
+	local descendantCount = countDescendantsLimited(instance, maxDescendants)
+	if maxDescendants < descendantCount then
+		state.skippedCount += 1
+		log("Skipped huge " .. instance.ClassName .. " at " .. safeFullName(instance))
+		return
+	end
+
+	local clone = cloneSnapshot(instance)
+	if not clone then
+		state.skippedCount += 1
+		return
+	end
+
 	if not record then
 		record = {
 			original = instance,
@@ -254,11 +354,13 @@ local function updateSnapshot(instance, reason)
 	record.reason = reason or "updated"
 	record.fullName = record.fullName or safeFullName(instance)
 	record.ancestors = buildAncestorSet(instance)
+	record.descendantCount = descendantCount
 
 	safeSetAttribute(clone, "MomentumOriginalPath", record.fullName)
 	safeSetAttribute(clone, "MomentumOriginalClassName", record.className)
 	safeSetAttribute(clone, "MomentumCapturedAt", record.firstSeen)
 	safeSetAttribute(clone, "MomentumLastSeenAt", record.lastSeen)
+	safeSetAttribute(clone, "MomentumDescendantCount", descendantCount)
 
 	if reason ~= "ancestor-refresh" then
 		log("Captured " .. record.className .. " at " .. record.fullName)
@@ -283,9 +385,16 @@ local function captureAdded(instance)
 	if not state.running then
 		return
 	end
+	if isIgnored(instance) or hasPendingAncestor(instance) or hasCapturedLiveAncestor(instance) then
+		return
+	end
 
-	task.defer(function()
-		if state.running and isLive(instance) then
+	state.pending[instance] = true
+	clearPendingDescendants(instance)
+
+	task.delay(getOptionNumber("CaptureDelay", 0.75, 0), function()
+		if state.running and state.pending[instance] and isLive(instance) then
+			state.pending[instance] = nil
 			updateSnapshot(instance, "added")
 			refreshCapturedAncestors(instance)
 			Momentum.UpdateGui()
@@ -309,7 +418,8 @@ local function loadSaveInstance(options)
 
 	local url = options.SaveInstanceUrl or DEFAULT_SAVEINSTANCE_URL
 	local source = game:HttpGet(url, true)
-	local loaded = loadstring(source, "saveinstance")
+	local loaded, err = loadstring(source, "saveinstance")
+	assert(loaded, err)
 	local saveinstance = loaded()
 	state.saveinstance = saveinstance
 	return saveinstance
@@ -427,17 +537,24 @@ function Momentum.Start(options)
 	end
 
 	options = mergeOptions({
+		CaptureDelay = 0.75,
 		IgnorePlayerCharacters = true,
-		RefreshAncestorSnapshots = true,
+		MaxCapturedRoots = 250,
+		MaxSnapshotDescendants = 1500,
+		RefreshAncestorSnapshots = false,
+		RunInitialSave = false,
+		SnapshotCooldown = 1,
 	}, options or {})
 
 	state.options = options
 	state.running = true
 	state.startedAt = os.clock()
 	state.recoveredCount = 0
+	state.skippedCount = 0
 	table.clear(state.captured)
 	table.clear(state.order)
 	table.clear(state.logs)
+	table.clear(state.pending)
 
 	local ok, result = xpcall(function()
 		return loadSaveInstance(options)
@@ -466,7 +583,11 @@ function Momentum.Start(options)
 	end))
 
 	log("Watcher started")
-	task.spawn(runInitialSave)
+	if options.RunInitialSave then
+		task.spawn(runInitialSave)
+	else
+		log("Initial save skipped")
+	end
 	Momentum.UpdateGui()
 	return true
 end
@@ -479,6 +600,7 @@ function Momentum.Stop()
 
 	state.running = false
 	clearConnections()
+	table.clear(state.pending)
 	log("Watcher stopped")
 	task.spawn(runFinalSave)
 	Momentum.UpdateGui()
@@ -628,8 +750,8 @@ function Momentum.CreateGui()
 	local frame = Instance.new("Frame")
 	frame.BackgroundColor3 = Color3.fromRGB(22, 26, 31)
 	frame.BorderSizePixel = 0
-	frame.Position = UDim2.new(0.5, -190, 0.5, -165)
-	frame.Size = UDim2.new(0, 380, 0, 330)
+	frame.Position = UDim2.new(0.5, -190, 0.5, -180)
+	frame.Size = UDim2.new(0, 380, 0, 360)
 	frame.Parent = gui
 	local frameCorner = Instance.new("UICorner")
 	frameCorner.CornerRadius = UDim.new(0, 8)
@@ -660,16 +782,17 @@ function Momentum.CreateGui()
 
 	local readMeToggle = makeToggle(frame, "ReadMe", UDim2.new(0, 14, 0, 142), true)
 	local characterToggle = makeToggle(frame, "Ignore Characters", UDim2.new(0, 196, 0, 142), true)
+	local initialSaveToggle = makeToggle(frame, "Initial Save", UDim2.new(0, 14, 0, 176), false)
 
-	local start = makeButton(frame, "Start", UDim2.new(0, 14, 0, 184), UDim2.new(0, 170, 0, 34), Color3.fromRGB(42, 126, 79))
-	local stop = makeButton(frame, "Stop", UDim2.new(0, 196, 0, 184), UDim2.new(0, 170, 0, 34), Color3.fromRGB(132, 66, 61))
+	local start = makeButton(frame, "Start", UDim2.new(0, 14, 0, 216), UDim2.new(0, 170, 0, 34), Color3.fromRGB(42, 126, 79))
+	local stop = makeButton(frame, "Stop", UDim2.new(0, 196, 0, 216), UDim2.new(0, 170, 0, 34), Color3.fromRGB(132, 66, 61))
 
-	local logTitle = makeLabel(frame, "Log", UDim2.new(0, 14, 0, 230), UDim2.new(1, -28, 0, 18), 12)
+	local logTitle = makeLabel(frame, "Log", UDim2.new(0, 14, 0, 262), UDim2.new(1, -28, 0, 18), 12)
 	logTitle.Font = Enum.Font.GothamBold
 	local logFrame = Instance.new("Frame")
 	logFrame.BackgroundColor3 = Color3.fromRGB(17, 20, 24)
 	logFrame.BorderSizePixel = 0
-	logFrame.Position = UDim2.new(0, 14, 0, 252)
+	logFrame.Position = UDim2.new(0, 14, 0, 284)
 	logFrame.Size = UDim2.new(1, -28, 0, 64)
 	logFrame.Parent = frame
 	local logCorner = Instance.new("UICorner")
@@ -686,6 +809,7 @@ function Momentum.CreateGui()
 		Momentum.Start({
 			FinalFilePath = finalName.Text ~= "" and finalName.Text or nil,
 			IgnorePlayerCharacters = characterToggle.Get(),
+			RunInitialSave = initialSaveToggle.Get(),
 			SaveOptions = {
 				ReadMe = readMeToggle.Get(),
 				ScriptSourceHeader = false,
@@ -725,7 +849,12 @@ function Momentum.UpdateGui()
 		or state.initialSaving and "Writing initial save"
 		or "Idle"
 	controls.status.Text = string.format("%s | %.1fs", statusText, elapsed)
-	controls.stats.Text = "Captured: " .. tostring(#state.order) .. " | Recovered: " .. tostring(state.recoveredCount)
+	controls.stats.Text = "Captured: "
+		.. tostring(#state.order)
+		.. " | Skipped: "
+		.. tostring(state.skippedCount)
+		.. " | Recovered: "
+		.. tostring(state.recoveredCount)
 	for i, label in controls.logLabels do
 		label.Text = state.logs[i] or ""
 	end
