@@ -309,7 +309,8 @@ local function index(self, index_name)
 	return self[index_name]
 end
 
-local CLIENT_VERSION = tonumber(string.split(version(), ".")[2])
+local FULL_VERSION = version()
+local CLIENT_VERSION = tonumber(string.split(FULL_VERSION, ".")[2])
 
 local attr_Type_IDs = {
 	string = 0x02,
@@ -1500,7 +1501,24 @@ do
 			end
 		end
 
-		local function get_classes_dump_from_url(url)
+		-- Normal API dumps do not include property defaults; full dumps do.
+		local function is_full_dump(classes)
+			if type(classes) ~= "table" then
+				return false
+			end
+
+			for _, class in classes do
+				for _, member in class.Members or {} do
+					if member.MemberType == "Property" then
+						return member.Default ~= nil
+					end
+				end
+			end
+
+			return false
+		end
+
+		local function try_fetch_dump(url)
 			local result = httpget_with_timeout(url, HTTP_TIMEOUT)
 			if not result then
 				return
@@ -1511,86 +1529,105 @@ do
 				return
 			end
 
-			return service.HttpService:JSONEncode(decoded.Classes or decoded)
+			return decoded
+		end
+
+		local function fetch_full_api_dump(version_hash)
+			-- Roblox's endpoint may silently return a normal dump instead of a full one.
+			local decoded = try_fetch_dump(
+				"https://setup.rbxcdn.com/" .. version_hash .. "-Full-API-Dump.json"
+			)
+			local classes = decoded and decoded.Classes
+			if is_full_dump(classes) then
+				return service.HttpService:JSONEncode(classes)
+			end
+
+			decoded = try_fetch_dump(
+				"https://raw.githubusercontent.com/setup-rbxcdn/roblox-full-api-dumps/refs/heads/main/full-dumps/"
+					.. version_hash
+					.. "-Full-API-Dump.json"
+			)
+			classes = decoded and decoded.Classes
+			if is_full_dump(classes) then
+				return service.HttpService:JSONEncode(classes)
+			end
 		end
 
 		local ok, err = pcall(function()
 			local CLIENT_VERSION_str = tostring(CLIENT_VERSION)
-			local ok, result = pcall(readfile, CLIENT_VERSION_str)
-			if
-				ok
-				and result
-				and result ~= ""
-				and pcall(service.HttpService.JSONDecode, service.HttpService, result)
-			then
-				API_Dump = result
-				return
+			local read_ok, cached = pcall(readfile, FULL_VERSION)
+			if read_ok and cached and cached ~= "" then
+				local decoded_ok, decoded = pcall(service.HttpService.JSONDecode, service.HttpService, cached)
+				if decoded_ok and is_full_dump(decoded) then
+					API_Dump = cached
+					return
+				end
 			end
 
-			API_Dump = get_classes_dump_from_url(
-				"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/Mini-API-Dump.json"
+			local matching_versions, seen_versions, exact_match = {}, {}
+			local version_history = httpget_with_timeout(
+				"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/refs/heads/roblox/version-history.json",
+				HTTP_TIMEOUT
 			)
-			if API_Dump then
-				pcall(writefile, CLIENT_VERSION_str, API_Dump)
-				return
-			end
-
-			local matching_versions, is_matched = {}
-
-			-- * https://setup.rbxcdn.com/versionQTStudio seems to be a bit behind DeployHistory.txt
-			local DeployHistoryRaw = httpget_with_timeout("https://setup.rbxcdn.com/DeployHistory.txt", HTTP_TIMEOUT)
-			if not DeployHistoryRaw then
-				return
-			end
-
-			local DeployHistory = string.split(DeployHistoryRaw, "\n")
-			for i = #DeployHistory, 1, -1 do
-				local line = DeployHistory[i]
-
-				local file_version = string.match(line, "file version: ([%d, ]+)")
-				if file_version then
-					if string.split(file_version, ", ")[2] == CLIENT_VERSION_str then
-						is_matched = true
-
-						local version_hash = string.match(line, "(version%-[^%s]+)")
-						if version_hash then
-							matching_versions[version_hash] = true
+			if version_history then
+				for file_version, version_hash in string.gmatch(
+					version_history,
+					'"([%d%.]+)"%s*:%s*"(version%-[^"]+)"'
+				) do
+					if string.split(file_version, ".")[2] == CLIENT_VERSION_str then
+						if file_version == FULL_VERSION then
+							exact_match = version_hash
 						end
-					elseif is_matched then
-						break
+						if not seen_versions[version_hash] then
+							seen_versions[version_hash] = true
+							table.insert(matching_versions, version_hash)
+						end
 					end
 				end
 			end
 
-			for version_hash in matching_versions do
-				result = httpget_with_timeout(
-					"https://setup.rbxcdn.com/" .. version_hash .. "-Full-API-Dump.json",
-					HTTP_TIMEOUT
+			if exact_match then
+				API_Dump = fetch_full_api_dump(exact_match)
+			end
+
+			local function fallback_channel(channel)
+				local decoded = try_fetch_dump(
+					"https://clientsettingscdn.roblox.com/v2/client-version/WindowsStudio64/channel/" .. channel
 				)
-				if result then
-					local o, r = pcall(service.HttpService.JSONDecode, service.HttpService, result)
-					if o then
-						API_Dump = service.HttpService:JSONEncode(r.Classes) -- minify it
-						break
+				local version_hash = decoded and decoded.clientVersionUpload
+				if version_hash then
+					return fetch_full_api_dump(version_hash)
+				end
+			end
+
+			if not API_Dump then
+				API_Dump = fallback_channel("zbeta") or fallback_channel("LIVE")
+			end
+
+			if not API_Dump then
+				for i = #matching_versions, 1, -1 do
+					local version_hash = matching_versions[i]
+					if version_hash ~= exact_match then
+						API_Dump = fetch_full_api_dump(version_hash)
+						if API_Dump then
+							break
+						end
 					end
 				end
 			end
 
 			if API_Dump then
-				pcall(writefile, CLIENT_VERSION_str, API_Dump)
+				pcall(writefile, FULL_VERSION, API_Dump)
 			end
 		end)
 
 		if not ok or not API_Dump then
-			warn("[DEBUG] Failed to get " .. version() .. " API Dump, trying latest..")
+			warn("[DEBUG] Failed to get " .. version() .. " full API dump")
 			warn("[DEBUG]", err)
-			API_Dump = get_classes_dump_from_url(
-				"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/Mini-API-Dump.json"
-			)
 		end
 
 		if not API_Dump then
-			error("Failed to load Roblox API dump. Your executor may be blocking HttpGet; try running again with a cached API dump file named '" .. tostring(CLIENT_VERSION) .. "'.", 2)
+			error("Failed to load Roblox API dump. Your executor may be blocking HttpGet; try running again with a cached API dump file named '" .. FULL_VERSION .. "'.", 2)
 		end
 
 		local classList = {}
