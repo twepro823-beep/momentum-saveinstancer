@@ -667,6 +667,7 @@ local function buildFinalSaveOptions(recoveredFolder)
 			mode = "full",
 			ReadMe = false,
 			noscripts = true,
+			IgnoreSpecialProperties = true,
 		})
 	end
 
@@ -674,6 +675,7 @@ local function buildFinalSaveOptions(recoveredFolder)
 	local extra = {
 		ReadMe = false,
 		noscripts = true,
+		IgnoreSpecialProperties = true,
 	}
 
 	if outputMode == "minimal" then
