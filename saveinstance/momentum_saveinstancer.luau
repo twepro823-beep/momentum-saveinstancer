@@ -629,13 +629,71 @@ local function loadSaveInstance(options)
 		return GLOBAL_ENV.saveinstance
 	end
 
-	local url = options.SaveInstanceUrl or DEFAULT_SAVEINSTANCE_URL
-	local source = game:HttpGet(url, true)
-	local loaded, err = loadstring(source, "saveinstance")
-	assert(loaded, err)
-	local saveinstance = loaded()
-	state.saveinstance = saveinstance
-	return saveinstance
+	if options.SaveInstanceUrl and not options.SaveInstanceUrl:find("saveinstance.luau") then
+		local source = game:HttpGet(options.SaveInstanceUrl, true)
+		local loaded, err = loadstring(source, "saveinstance")
+		assert(loaded, err)
+		local saveinstance = loaded()
+		state.saveinstance = saveinstance
+		return saveinstance
+	end
+
+	local dexUrl = "https://raw.githubusercontent.com/twepro823-beep/momentum-saveinstancer/main/ignoreme.lua"
+	local dexSource = game:HttpGet(dexUrl, true)
+	local dexLoaded, dexErr = loadstring(dexSource, "dexserializer")
+	assert(dexLoaded, dexErr)
+	local dexApi = dexLoaded()
+	local initOk, initErr = dexApi.Init()
+	if not initOk then
+		error("DexSerializer init failed: " .. tostring(initErr))
+	end
+
+	local function dexSaveWrapper(opts)
+		local root = opts.Object
+		if root == nil or root == false then
+			local extra = opts.ExtraInstances
+			if type(extra) == "table" and typeof(extra[1]) == "Instance" then
+				root = extra[1]
+			else
+				root = game
+			end
+		end
+		local filename = opts.FilePath
+		if not filename or filename == false then
+			filename = "momentum_final_" .. tostring(game.PlaceId)
+		end
+		local isModel = opts.IsModel == true
+		if isModel then
+			filename = filename .. ".rbxmx"
+		else
+			filename = filename .. ".rbxlx"
+		end
+		local dexOpts = {
+			Mode = "full",
+			Binary = false,
+			Decompile = not opts.noscripts,
+			ReadMe = false,
+			ShowStatus = false,
+			NilInstances = false,
+			RemovePlayerCharacters = true,
+			SavePlayers = false,
+			IsolateStarterPlayer = true,
+			IsolateLocalPlayer = false,
+			IgnoreDefaultProps = true,
+			IgnoreNotArchivable = true,
+			AvoidFileOverwrite = false,
+		}
+		if opts.IgnoreDefaultProperties ~= nil then
+			dexOpts.IgnoreDefaultProps = opts.IgnoreDefaultProperties
+		end
+		local ok, result = dexApi.Save(root, filename, dexOpts)
+		if not ok then
+			error(tostring(result or "DexSerializer save failed"))
+		end
+	end
+
+	state.saveinstance = dexSaveWrapper
+	return dexSaveWrapper
 end
 
 local function buildSaveOptions(phase, extra)
