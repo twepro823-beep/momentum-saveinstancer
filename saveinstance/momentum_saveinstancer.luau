@@ -671,22 +671,19 @@ local function buildFinalSaveOptions(recoveredFolder)
 		})
 	end
 
-	local serverStorage = game:GetService("ServerStorage")
 	local extra = {
 		ReadMe = false,
 		noscripts = true,
 		IgnoreSpecialProperties = true,
+		VirtualChildren = {
+			[game:GetService("ServerStorage")] = { recoveredFolder },
+		},
 	}
 
 	if outputMode == "minimal" then
-		recoveredFolder.Parent = serverStorage
 		extra.mode = "invalid"
-		extra.ExtraInstances = { serverStorage }
+		extra.ExtraInstances = { game:GetService("ServerStorage") }
 		extra.IsModel = false
-	else
-		extra.VirtualChildren = {
-			[serverStorage] = { recoveredFolder },
-		}
 	end
 
 	return buildSaveOptions("final", extra)
@@ -848,7 +845,7 @@ function Momentum.Start(options)
 		IncludeLiveCaptured = true,
 		MaxCapturedRoots = false,
 		MaxSnapshotDescendants = 4000,
-		OutputMode = "minimal",
+		OutputMode = "model",
 		RefreshAncestorSnapshots = false,
 		RunInitialSave = false,
 		SnapshotCooldown = 1,
